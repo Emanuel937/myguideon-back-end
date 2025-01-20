@@ -253,6 +253,7 @@ router.get('/:id', async (req, res) => {
 
 
 
+
 router.post('/update/gallery/:id', upload.array('files', 10), (req, res) => {
   const destinationId = req.params.id; // Récupérer l'ID de la destination depuis l'URL
   const destinationDir = path.join(__dirname, `../public/uploads/destination/gallery`); // Définir le répertoire de la galerie
@@ -266,7 +267,12 @@ router.post('/update/gallery/:id', upload.array('files', 10), (req, res) => {
   let { cover } = req.body;  // Directement récupérer 'cover' depuis req.body
   
   // Créer la liste des images de la galerie avec les nouveaux chemins
+  console.log("cover is  ______");
+  console.log(cover);
   const galleryImages = req.files.map(file => {
+    console.log(file);
+    console.log(file.originalname);
+  
     // Générer un nom de fichier unique en utilisant la date actuelle, un UUID et l'extension du fichier
     const extensionGallery = path.extname(file.originalname);
     const uniqueFilename = `${Date.now()}-${uuidv4()}${extensionGallery}`;
@@ -277,21 +283,11 @@ router.post('/update/gallery/:id', upload.array('files', 10), (req, res) => {
     return filePath; // Retourner le chemin d'accès relatif pour la base de données
   });
   
+
   // Si 'cover' n'est pas spécifié, choisir la première image de la galerie comme couverture
   if (!cover || cover.length <= 0) {
     cover = galleryImages[0]; // Par défaut, utiliser la première image téléchargée
-  } else {
-    // Si 'cover' est spécifié, mettre à jour l'image de couverture avec un chemin complet
-    const coverImage = req.files.find(file => file.filename === cover);
-    if (coverImage) {
-      // Obtenez l'extension du fichier
-      const extension = path.extname(coverImage.originalname);
-      // Générez le nom de fichier avec le timestamp, un UUID et l'extension
-      const newCoverFilename = `${Date.now()}-${uuidv4()}${extension}`;
-      cover = `/public/uploads/destination/gallery/${newCoverFilename}`;
-      fs.renameSync(coverImage.path, path.join(destinationDir, newCoverFilename)); // Déplacer le fichier cover avec un nouveau nom
-    }
-  }
+  } 
 
   // Requête SQL pour mettre à jour la table destination
   const query = `
@@ -315,6 +311,7 @@ router.post('/update/gallery/:id', upload.array('files', 10), (req, res) => {
       res.status(500).json({ message: "Erreur lors de la mise à jour de la galerie" });
     });
 });
+
 
 
 
