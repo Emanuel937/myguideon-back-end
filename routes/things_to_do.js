@@ -26,181 +26,231 @@ Router.get('/',async(req, res)=>{
   };
   
 
-  const activitiesFilePath = '/public/uploads/destination/activities'; 
 
+
+
+  const activitiesFilePath = '/public/uploads/destination/activities'; 
   Router.post('/add', uploadFile(activitiesFilePath), async (req, res) => {
     try {
-      // Vérifier si des activités ont été envoyées
-      const activities = req.body.activities;
+      // Récupérer les données de l'activité envoyée dans la requête
+
+      console.log(req.body);
+      const { name, address, description, status, categories, lon, lat, destinationID } = req.body;
+
   
-      // Si le tableau activities est vide ou non défini, renvoyer une erreur
-      if (!activities || activities.length === 0) {
-        return res.status(400).json({ error: 'No activities provided' });
+      // Vérifier que les champs obligatoires sont présents
+      if (!name || !address) {
+        return res.status(400).json({ error: 'Missing required fields (name or address).' });
       }
   
-      // Log pour déboguer
-      console.log('Activities data:', activities);
+      // Gérer les fichiers téléchargés
+      const icon = req.files['icon'] ? req.files['icon'][0].filename : null;
+      const gallery = req.files['gallery']
+        ? req.files['gallery'].map((file) => file.filename)
+        : [];
   
-      // Initialisation de l'insertion
-      const insertThingstoDo = `
-        INSERT INTO things_to_do (name, adress, destination_name, description, logintude, icon, gallery)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `;
+      // Récupérer les données existantes pour cette destination
+      const [existingData] = await db.execute(
+        `SELECT activities FROM destination WHERE id = ?`,
+        [destinationID]
+      );
   
-      // Itérer sur toutes les activités envoyées
-      for (const activity of activities) {
-        const { name, address, destination_name, description } = activity;
-        const longitude = null; // Si nécessaire, remplacez par une valeur par défaut ou obtenez-la de l'activité
-        const icon = req.files['icon'] ? req.files['icon'][0].filename : null; // Icône de l'activité
-        const gallery = req.files['gallery'] ? req.files['gallery'].map(file => file.filename) : null; // Galerie
+      // Si aucune donnée existante, initialiser un tableau vide
+      let data = existingData.length && existingData[0].activities
+        ? JSON.parse(existingData[0].activities)
+        : [];
   
-        // Exécution de la requête pour chaque activité
-        await db.execute(insertThingstoDo, [
-          name || null, // Si name est undefined, utilisez null
-          address || null, // Idem pour address
-          destination_name || null, // Idem pour destination_name
-          description || null, // Idem pour description
-          longitude, // Longitude est null
-          icon, // Si icon est présent, utiliser le nom du fichier ou null
-          gallery ? JSON.stringify(gallery) : null, // Galerie convertie en JSON ou null
-        ]);
+      // Construire un nouvel objet pour la nouvelle activité
+      const newData = {
+        activity_name: name || null,
+        address: address || null,
+        description: description || null,
+        status: status || null,
+        categories: categories || null,
+        lon: lon || null,
+        lat: lat || null,
+        gallery: gallery,
+        icon: icon || null,
+        id: data.length, // L'ID est maintenant inclus dans l'objet "data"
+      };
   
-        console.log(`Activity ${name} inserted successfully`);
-      }
+      // Ajouter la nouvelle activité au tableau existant
+      data.push(newData);
   
-      // Réponse de succès
-      res.status(200).json('All activities inserted successfully');
+      // Mettre à jour la table avec le tableau d'activités modifié
+      await db.execute(
+        `UPDATE destination SET activities = ? WHERE id = ?`,
+        [JSON.stringify(data), destinationID]
+      );
+  
+      res.status(200).json({ message: 'Activity added successfully.' , index:data.length});
     } catch (error) {
-      // Gérer l'erreur si elle se produit
-      console.error('Error inserting data:', error);
-      res.status(500).json({ error: 'An error occurred while processing your request' });
+      console.error('Error processing activities:', error);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
-  
-
-  Router.delete('/delete/:id', async (req, res) => {
-  
-    const id = req.params.id;
-    const selectQuery = 'SELECT icon FROM things_to_do WHERE id = ?';
-    const deleteQuery = 'DELETE FROM things_to_do WHERE id = ?';
-  
+  Router.delete('/delete/:destinationID/:id', async (req, res) => {
     try {
-      // Récupérer le chemin de l'image
-      const [rows] = await db.execute(selectQuery, [id]);
-      if (rows.length === 0) {
-        return res.status(404).json({ message: 'Item not found.' });
+      const destinationID = req.params.destinationID; // ID de la destination cible
+      const idToDelete = parseInt(req.params.id, 10); // ID de l'activité à supprimer
+  
+      if (isNaN(idToDelete)) {
+        return res.status(400).json({ error: 'Invalid activity ID provided.' });
       }
   
-      const imagePath = rows[0].image_path;
+      // Récupérer les données existantes dans la table "destination"
+      const [existingData] = await db.execute(
+        `SELECT activities FROM destination WHERE id = ?`,
+        [destinationID]
+      );
   
-      // Supprimer l'entrée de la base de données
-      await db.execute(deleteQuery, [id]);
-  
-      // Supprimer l'image associée si elle existe
-      if (imagePath) {
-        const fullPath = path.resolve(__dirname, '../public/uploads/destination/activities', imagePath); // Chemin complet vers le fichier
-        fs.unlink(fullPath, (err) => {
-          if (err) {
-            console.error('Error deleting the image file:', err);
-          } else {
-            console.log('Image file deleted successfully');
-          }
-        });
+      // Vérifier si des activités existent
+      if (!existingData.length || !existingData[0].activities) {
+        return res.status(404).json({ error: 'No activities found for this destination.' });
       }
   
-      res.status(200).json({ message: 'Data deleted successfully.' });
+      // Parser les activités existantes
+      let activities = JSON.parse(existingData[0].activities);
+  
+      // Trouver l'index correspondant à l'ID
+      const indexToDelete = activities.findIndex((activity) => activity.id === idToDelete);
+  
+      // Vérifier si l'ID existe
+      if (indexToDelete === -1) {
+        return res.status(404).json({ error: 'Activity with the given ID not found.' });
+      }
+  
+      // Supprimer l'activité correspondant à l'ID
+      const deletedActivity = activities.splice(indexToDelete, 1);
+  
+      // Mettre à jour les IDs des activités restantes pour maintenir la cohérence
+      activities = activities.map((activity, index) => ({
+        ...activity,
+        id: index, // Réattribuer les IDs
+      }));
+  
+      // Mettre à jour la table avec les nouvelles données
+      await db.execute(
+        `UPDATE destination SET activities = ? WHERE id = ?`,
+        [JSON.stringify(activities), destinationID]
+      );
+  
+      res.status(200).json({
+        message: 'Activity deleted successfully.',
+        deletedActivity,
+      });
     } catch (error) {
-      console.error('Error during deletion:', error);
-      res.status(500).json({ message: 'An error occurred during deletion.' });
+      console.error('Error during activity deletion:', error);
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
 
 
-  Router.get('/:id', async (req, res) => {
-    const query = 'SELECT * FROM things_to_do WHERE id = ?';
-  
+  Router.put('/update/:destinationID/:id', uploadFile(activitiesFilePath), async (req, res) => {
     try {
-      // Exécution de la requête dans le bloc try
-      const [response] = await db.execute(query, [req.params.id]);
+      const destinationID = req.params.destinationID; // ID of the destination
+      const idToUpdate = parseInt(req.params.id, 10); // ID (index) of the activity to update
   
-      // Réponse réussie
-      res.status(200).json(response);
+      if (isNaN(idToUpdate)) {
+        return res.status(400).json({ error: 'Invalid activity ID provided.' });
+      }
+  
+      // Retrieve existing data for this destination
+      const [existingData] = await db.execute(
+        `SELECT activities FROM destination WHERE id = ?`,
+        [destinationID]
+      );
+  
+      console.log('existingData:', existingData); // Log the database result for debugging
+  
+      // Ensure data is valid and activities exist
+      if (
+        !existingData || // Check if the result is undefined or null
+        !Array.isArray(existingData) || // Check if the result is not an array
+        existingData.length === 0 || // Check if the array is empty
+        !existingData[0].activities // Check if the activities field is missing
+      ) {
+        return res.status(404).json({ error: 'No activities found for this destination.' });
+      }
+  
+      // Parse existing activities
+      let activities;
+      try {
+        activities = JSON.parse(existingData[0].activities);
+      } catch (parseError) {
+        console.error('Error parsing activities JSON:', parseError);
+        return res.status(500).json({ error: 'Failed to parse activities data.' });
+      }
+  
+      // Find the index corresponding to the ID
+      const activityIndex = activities.findIndex((activity) => activity.id === idToUpdate);
+  
+      // Check if the ID exists
+      if (activityIndex === -1) {
+        return res.status(404).json({ error: 'Activity with the given ID not found.' });
+      }
+  
+      // Retrieve the data sent in the request for updating
+      const { name, address, description, status, categories, lon, lat } = req.body;
+  
+      // Handle uploaded files
+      const icon = req.files['icon'] ? req.files['icon'][0].filename : null;
+      const gallery = req.files['gallery']
+        ? req.files['gallery'].map((file) => file.filename)
+        : [];
+  
+      // Update the specific activity's data
+      activities[activityIndex] = {
+        ...activities[activityIndex], // Keep existing fields if new ones are not provided
+        activity_name: name || activities[activityIndex].activity_name,
+        address: address || activities[activityIndex].address,
+        description: description || activities[activityIndex].description,
+        status: status || activities[activityIndex].status,
+        categories: categories || activities[activityIndex].categories,
+        lon: lon || activities[activityIndex].lon,
+        lat: lat || activities[activityIndex].lat,
+        gallery: gallery.length > 0 ? gallery : activities[activityIndex].gallery,
+        icon: icon || activities[activityIndex].icon,
+      };
+  
+      // Update the table with the new data
+      await db.execute(
+        `UPDATE destination SET activities = ? WHERE id = ?`,
+        [JSON.stringify(activities), destinationID]
+      );
+  
+      res.status(200).json({
+        message: 'Activity updated successfully.',
+        updatedActivity: activities[activityIndex],
+      });
     } catch (error) {
-      // Gestion des erreurs
-      console.error('Erreur lors de la récupération de l\'activité :', error);
-      res.status(500).json({ error: 'Erreur interne du serveur' });
+      console.error('Error during activity update:', error); // Log the full error for debugging
+      res.status(500).json({ error: 'An error occurred while processing your request.' });
     }
   });
+  
+  
 
-  Router.put('/update/:id', uploadFile(activitiesFilePath), async (req, res) => {
-    try {
-      const id = req.params.id; // ID de l'activité à mettre à jour
-  
-      // Récupérer les données de l'activité envoyées dans le corps de la requête
-      const { name, address, destination_name, description } = req.body;
 
-      const longitude = null;
-  
-      // Récupérer les fichiers téléchargés
-      const newIcon = req.files['icon'] ? req.files['icon'][0].filename : null;
-      const newGallery = req.files['gallery'] ? req.files['gallery'].map(file => file.filename) : null;
-  
-      // Récupérer l'activité actuelle pour gérer les anciens fichiers
-      const [currentActivity] = await db.execute('SELECT * FROM things_to_do WHERE id = ?', [id]);
-  
-      if (!currentActivity || currentActivity.length === 0) {
-        return res.status(404).json({ error: 'Activity not found' });
-      }
-  
-      const oldActivity = currentActivity[0];
-  
-      // Gestion des fichiers (icône)
-      let icon = oldActivity.icon;
-      if (newIcon) {
-        // Supprimer l'ancienne icône si elle existe
-        if (icon) {
-          const oldIconPath = `${activitiesFilePath}/${icon}`;
-          fs.unlinkSync(oldIconPath);
-        }
-        icon = newIcon; // Remplacer par la nouvelle icône
-      }
-  
-      // Gestion de la galerie
-      let gallery = oldActivity.gallery ? JSON.parse(oldActivity.gallery) : [];
-      if (newGallery) {
-        // Supprimer les anciennes images de la galerie si elles existent
-        gallery.forEach(file => {
-          const oldGalleryPath = `${activitiesFilePath}/${file}`;
-          if (fs.existsSync(oldGalleryPath)) {
-            fs.unlinkSync(oldGalleryPath);
-          }
-        });
-        gallery = newGallery; // Remplacer par la nouvelle galerie
-      }
-  
-      // Mise à jour dans la base de données
-      const updateQuery = `
-        UPDATE things_to_do 
-        SET name = ?, adress = ?, destination_name = ?, description = ?, logintude = ?, icon = ?, gallery = ?
-        WHERE id = ?
-      `;
-  
-      await db.execute(updateQuery, [
-        name || oldActivity.name,
-        address || oldActivity.adress,
-        destination_name || oldActivity.destination_name,
-        description || oldActivity.description,
-        longitude || oldActivity.logintude,
-        icon,
-        gallery.length > 0 ? JSON.stringify(gallery) : null,
-        id,
-      ]);
-  
-      res.status(200).json({ message: `Activity ${id} updated successfully` });
-    } catch (error) {
-      console.error('Error updating activity:', error);
-      res.status(500).json({ error: 'An error occurred while updating the activity' });
+
+
+  Router.get('/select/:destinationID', async(req, res)=>
+  {
+    
+    try{
+
+      const destinationID = req.params.destinationID;
+      const query         = 'SELECT activities, basic_info FROM destination WHERE id = ?'
+
+      const [response]    = await db.execute(query, [destinationID]);
+
+      res.status(200).json({data:response});
+
     }
-  });
+    catch(error){
+      console.log(error);
+    }
+  })
   
 module.exports = Router;
+
